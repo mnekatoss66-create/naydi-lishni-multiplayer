@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Найди лишний — мультиплеер</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#0e1226;--panel:#1b213b;--muted:#9aa7d0;--accent:#765bff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:22px 14px 36px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#f5f6ff;background:radial-gradient(circle at 85% 0%,#28345e 0,transparent 30%),var(--bg)}
+.app{width:min(650px,100%);margin:auto}header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:22px}.brand{font-size:clamp(22px,5vw,30px);font-weight:900}.eyebrow{color:var(--muted);font-size:12px;letter-spacing:.15em;font-weight:800;margin-top:4px}.pill{border:1px solid #384366;background:#1b2342;padding:8px 11px;border-radius:999px;color:#c9d2f6;font-size:11px;white-space:nowrap}
+.panel{background:rgba(20,26,49,.92);border:1px solid #303a60;border-radius:23px;padding:clamp(16px,4vw,25px);box-shadow:0 20px 60px #05081655}h1{font-size:clamp(25px,6vw,34px);margin:0 0 8px;text-align:center}.sub{color:#b4bfdf;text-align:center;line-height:1.55;margin:0 auto 22px;max-width:460px}.label{display:block;color:#b7c2e6;font-size:12px;font-weight:800;letter-spacing:.08em;margin:14px 0 7px}.field{width:100%;border:1px solid #3a466e;border-radius:12px;background:#10162d;color:white;padding:13px 14px;font:inherit;outline:none}.field:focus{border-color:#9b8aff}.row{display:flex;gap:10px}.row>*{flex:1;min-width:0}.btn{border:0;border-radius:13px;padding:13px 15px;font-size:14px;font-weight:800;cursor:pointer;color:white;background:linear-gradient(135deg,#8a68ff,#6246ed)}.btn.secondary{background:#252e50;border:1px solid #3a466e;color:#dfe4ff}.btn:disabled{opacity:.45;cursor:not-allowed}.error{min-height:22px;color:#ff9eaa;font-size:13px;margin:10px 0}.hidden{display:none!important}.roomhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}.roomcode{font-size:23px;font-weight:900;letter-spacing:.13em;background:#252e50;border:1px dashed #7581b1;padding:8px 12px;border-radius:12px}.players{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}.player{border:1px solid #303a60;border-radius:15px;padding:13px;background:#1b213b}.pname{font-weight:800;overflow-wrap:anywhere}.pscore{font-size:25px;font-weight:900;margin-top:4px}.muted{color:var(--muted);font-size:12px}.status{text-align:center;min-height:26px;color:#dbe1ff;font-weight:750;margin:14px 0}.board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:clamp(7px,2vw,12px)}.tile{border:0;border-radius:clamp(10px,2.5vw,17px);aspect-ratio:1;width:100%;cursor:pointer;box-shadow:inset 0 -5px 0 #00000010;transition:transform .12s}.tile:hover{transform:translateY(-2px)}.tile:disabled{cursor:default}.foot{text-align:center;color:#7e8bb6;font-size:12px;margin-top:16px;line-height:1.5}.note{background:#111831;border-radius:12px;padding:12px;color:#b4bfdf;font-size:13px;line-height:1.5;margin-top:16px}
+@media(max-width:400px){.row{flex-direction:column}.players{gap:7px}.player{padding:10px}}
+</style>
+</head>
+<body><main class="app">
+<header><div><div class="brand">НАЙДИ ЛИШНИЙ</div><div class="eyebrow">ОНЛАЙН · 1 НА 1</div></div><div class="pill">● МУЛЬТИПЛЕЕР</div></header>
+<section class="panel" id="lobby">
+<h1>Играй с друзьями 🎮</h1><p class="sub">Создай комнату и отправь код другу или введи код комнаты, чтобы присоединиться.</p>
+<label class="label" for="name">ТВОЁ ИМЯ</label><input id="name" class="field" maxlength="18" placeholder="Например, Алекс" value="">
+<div class="row" style="margin-top:14px"><button id="createBtn" class="btn">Создать комнату</button><button id="showJoinBtn" class="btn secondary">Ввести код</button></div>
+<div id="joinArea" class="hidden"><label class="label" for="codeInput">КОД КОМНАТЫ</label><input id="codeInput" class="field" maxlength="5" placeholder="ABCDE" autocomplete="off"><button id="joinBtn" class="btn" style="width:100%;margin-top:10px">Присоединиться</button></div>
+<div id="error" class="error" role="status"></div>
+<div class="note">Правила: первый правильный ответ получает очко и запускает следующий раунд. Ошибка означает поражение. Побеждает тот, кто первым наберёт 10 очков.</div>
+</section>
+
+<section class="panel hidden" id="roomPanel">
+<div class="roomhead"><div><div class="muted">КОД КОМНАТЫ — отправь другу</div><div id="roomCode" class="roomcode">-----</div></div><button id="copyBtn" class="btn secondary">Копировать код</button></div>
+<div id="roomStatus" class="status">Ожидаем второго игрока…</div>
+<div id="players" class="players"></div>
+<div id="board" class="board hidden"></div>
+<div id="gameMessage" class="status">Когда оба игрока подключатся, создатель сможет начать матч.</div>
+<div class="row"><button id="startBtn" class="btn" disabled>Начать матч</button><button id="leaveBtn" class="btn secondary">Выйти из комнаты</button></div>
+<div id="matchResult" class="note hidden" aria-live="polite"></div>
+<div id="roomError" class="error"></div>
+</section>
+<div class="foot">Для игры с другом оба устройства должны подключиться к одному серверу.<br>Пока сервер работает на твоём компьютере, это демо доступно в твоей локальной сети.</div>
+</main>
+<script>
+const socket = io();
+const $ = id => document.getElementById(id);
+let roomCode = "";
+let myId = "";
+let hostId = "";
+let roomStatus = "waiting";
+let currentRound = 0;
+let locked = true;
+
+function showError(text) { $("error").textContent = text || ""; }
+function showRoomError(text) { $("roomError").textContent = text || ""; }
+function getName() { return $("name").value.trim().slice(0,18) || "Игрок"; }
+
+$("showJoinBtn").addEventListener("click", () => {
+  $("joinArea").classList.toggle("hidden");
+  $("codeInput").focus();
+});
+$("createBtn").addEventListener("click", () => {
+  showError("");
+  socket.emit("create-room", {name:getName()}, result => {
+    if (!result || !result.ok) return showError(result?.error || "Не удалось создать комнату.");
+    roomCode = result.code; myId = result.playerId; enterRoom();
+  });
+});
+$("joinBtn").addEventListener("click", () => {
+  showError("");
+  const code = $("codeInput").value.trim().toUpperCase();
+  if (code.length !== 5) return showError("Введи пятизначный код комнаты.");
+  socket.emit("join-room", {code, name:getName()}, result => {
+    if (!result || !result.ok) return showError(result?.error || "Не удалось подключиться.");
+    roomCode = result.code; myId = result.playerId; enterRoom();
+  });
+});
+$("codeInput").addEventListener("input", e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,""); });
+function enterRoom() {
+  $("lobby").classList.add("hidden");
+  $("roomPanel").classList.remove("hidden");
+  $("roomCode").textContent = roomCode;
+  $("board").classList.add("hidden");
+  $("matchResult").classList.add("hidden");
+  $("gameMessage").textContent = "Ожидаем второго игрока…";
+  showRoomError("");
+}
+$("copyBtn").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(roomCode); $("copyBtn").textContent = "Скопировано!"; }
+  catch { $("copyBtn").textContent = "Код: " + roomCode; }
+  setTimeout(() => $("copyBtn").textContent = "Копировать код", 1600);
+});
+$("startBtn").addEventListener("click", () => {
+  showRoomError("");
+  socket.emit("start-match", {code:roomCode}, result => {
+    if (!result?.ok) showRoomError(result?.error || "Не удалось начать матч.");
+  });
+});
+$("leaveBtn").addEventListener("click", () => {
+  socket.emit("leave-room", {code:roomCode});
+  roomCode = ""; roomStatus = "waiting"; locked = true;
+  $("roomPanel").classList.add("hidden"); $("lobby").classList.remove("hidden");
+  $("board").innerHTML = ""; $("board").classList.add("hidden");
+  $("matchResult").classList.add("hidden"); showError(""); showRoomError("");
+});
+
+socket.on("room-state", state => {
+  if (state.code !== roomCode) return;
+  hostId = state.hostId; roomStatus = state.status;
+  $("roomCode").textContent = state.code;
+  $("roomStatus").textContent = state.status === "waiting" ? "Комната создана" : state.status === "playing" ? "Матч идёт!" : "Матч завершён";
+  $("players").innerHTML = "";
+  state.players.forEach((p, index) => {
+    const card = document.createElement("div"); card.className = "player";
+    const name = document.createElement("div"); name.className = "pname";
+    name.textContent = (p.id === myId ? "Ты · " : "") + p.name + (p.id === state.hostId ? " ★" : "");
+    const score = document.createElement("div"); score.className = "pscore"; score.textContent = p.score + " очков";
+    const small = document.createElement("div"); small.className = "muted"; small.textContent = p.connected ? "Подключён" : "Соединение потеряно";
+    card.append(name, score, small); $("players").appendChild(card);
+  });
+  $("startBtn").classList.toggle("hidden", state.status !== "waiting");
+  $("startBtn").disabled = state.players.length < 2 || state.hostId !== myId;
+  if (state.status === "waiting") {
+    $("gameMessage").textContent = state.players.length < 2 ? "Отправь код другу и подожди его подключения." : (state.hostId === myId ? "Все готовы? Нажми «Начать матч»." : "Ожидаем, пока создатель начнёт матч.");
+  }
+});
+
+socket.on("new-round", data => {
+  currentRound = data.round; locked = false;
+  $("matchResult").classList.add("hidden");
+  $("board").classList.remove("hidden");
+  $("gameMessage").textContent = "Раунд " + data.round + " · Найди квадрат другого цвета!";
+  $("board").innerHTML = "";
+  data.colors.forEach((color, index) => {
+    const tile = document.createElement("button");
+    tile.className = "tile"; tile.type = "button";
+    tile.style.backgroundColor = color; tile.setAttribute("aria-label","Квадрат " + (index + 1));
+    tile.addEventListener("click", () => {
+      if (locked) return;
+      locked = true;
+      document.querySelectorAll(".tile").forEach(button => button.disabled = true);
+      socket.emit("choose-tile", {code:roomCode, index}, response => {
+        if (!response?.ok) showRoomError(response?.error || "Ответ не принят.");
+      });
+    });
+    $("board").appendChild(tile);
+  });
+});
+socket.on("point-scored", data => {
+  $("gameMessage").textContent = data.playerName + " нашёл! +1 очко. Готовься к следующему раунду…";
+  locked = true;
+});
+socket.on("wrong-answer", data => {
+  $("gameMessage").textContent = data.playerName + " выбрал неверный квадрат.";
+});
+socket.on("match-over", data => {
+  locked = true; $("board").classList.add("hidden");
+  $("matchResult").classList.remove("hidden");
+  let text;
+  if (data.reason === "opponent-left" || data.reason === "disconnect") {
+    text = data.winnerName ? data.winnerName + " победил — соперник отключился." : "Матч завершён: игрок отключился.";
+  } else if (data.reason === "wrong-answer") {
+    text = data.winnerName ? data.winnerName + " победил! Соперник ошибся." : "Матч завершён.";
+  } else {
+    text = data.winnerName ? data.winnerName + " победил, набрав 10 очков! 🏆" : "Матч завершён.";
+  }
+  $("matchResult").textContent = text;
+  $("gameMessage").textContent = "Матч завершён.";
+});
+socket.on("connect", () => {});
+socket.on("connect_error", () => showError("Не удаётся подключиться к серверу. Убедись, что он запущен."));
+</script>
+</body>
+</html>
